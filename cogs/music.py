@@ -283,49 +283,48 @@ class Music(commands.Cog):
     async def get_soundcloud_playlist(self, url: str) -> List[dict]:
         """Get all songs from a SoundCloud playlist, always fetch full info for each entry if missing."""
         try:
+            # Clean up URL by removing query parameters
+            clean_url = url.split('?')[0]
+            
             with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
-                playlist = ydl.extract_info(url, download=False)
+                # First get the playlist info
+                playlist = ydl.extract_info(clean_url, download=False)
                 songs = []
+                
                 if 'entries' in playlist:
                     for entry in playlist['entries']:
                         if not entry:
                             continue
-                        # Nếu entry chưa có đủ thông tin, lấy lại bằng id
-                        if not entry.get('title') or not entry.get('url'):
-                            track_id = entry.get('id')
-                            if track_id:
-                                try:
-                                    # SoundCloud id không phải là url, cần lấy original_url nếu có
-                                    original_url = entry.get('original_url') or entry.get('webpage_url')
-                                    if original_url:
-                                        track_info = ydl.extract_info(original_url, download=False)
-                                    else:
-                                        # fallback: thử với id
-                                        track_info = ydl.extract_info(f'https://soundcloud.com/{track_id}', download=False)
-                                    songs.append({
-                                        'title': track_info.get('title', 'Unknown Title'),
-                                        'url': track_info.get('url', ''),
-                                        'duration': track_info.get('duration', 0),
-                                        'thumbnail': track_info.get('thumbnail', '')
-                                    })
-                                except Exception as e:
-                                    logger.error(f"❌ Error fetching SoundCloud track info for {track_id}: {e}")
-                                    continue
-                        else:
+                            
+                        try:
+                            # Get the track URL
+                            track_url = entry.get('webpage_url') or entry.get('url')
+                            if not track_url:
+                                continue
+                                
+                            # Get full track info
+                            track_info = ydl.extract_info(track_url, download=False)
+                            
                             songs.append({
-                                'title': entry.get('title', 'Unknown Title'),
-                                'url': entry.get('url', ''),
-                                'duration': entry.get('duration', 0),
-                                'thumbnail': entry.get('thumbnail', '')
+                                'title': track_info.get('title', 'Unknown Title'),
+                                'url': track_info.get('url', ''),
+                                'duration': track_info.get('duration', 0),
+                                'thumbnail': track_info.get('thumbnail', '')
                             })
+                        except Exception as e:
+                            logger.error(f"❌ Error fetching SoundCloud track info: {e}")
+                            continue
+                            
                     return songs
-                # Nếu là 1 track
+                    
+                # If it's a single track
                 return [{
                     'title': playlist.get('title', 'Unknown Title'),
                     'url': playlist.get('url', ''),
                     'duration': playlist.get('duration', 0),
                     'thumbnail': playlist.get('thumbnail', '')
                 }]
+                
         except Exception as e:
             logger.error(f"❌ Error getting SoundCloud playlist: {e}")
             return []
