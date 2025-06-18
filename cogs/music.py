@@ -98,10 +98,28 @@ class Music(commands.Cog):
         try:
             # Download and play the song with current cookies
             with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
-                info = ydl.extract_info(song['url'], download=False)
-                url = info['url']
+                try:
+                    info = ydl.extract_info(song['url'], download=False)
+                    url = info['url']
+                except Exception as e:
+                    logger.error(f"❌ Error extracting info: {e}")
+                    # If it's a SoundCloud URL, try to get a different format
+                    if 'soundcloud.com' in song['url']:
+                        try:
+                            # Try to get a different format
+                            info = ydl.extract_info(song['url'], download=False, format='bestaudio/best')
+                            url = info['url']
+                        except Exception as e2:
+                            logger.error(f"❌ Error getting alternative format: {e2}")
+                            await ctx.send("❌ Không thể phát bài hát này. Đang chuyển sang bài tiếp theo...")
+                            await self.play_next(ctx)
+                            return
+                    else:
+                        await ctx.send("❌ Không thể phát bài hát này. Đang chuyển sang bài tiếp theo...")
+                        await self.play_next(ctx)
+                        return
                 
-            # Enhanced audio processing options
+            # Enhanced audio processing options with better error handling
             ffmpeg_options = {
                 'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
                 'options': (
@@ -121,19 +139,73 @@ class Music(commands.Cog):
                 )
             }
             
+            # Add error handling for the play command
+            def after_playing(error):
+                if error:
+                    logger.error(f"❌ Error in after_playing: {error}")
+                    asyncio.run_coroutine_threadsafe(
+                        self.handle_play_error(ctx, error), self.bot.loop
+                    )
+                else:
+                    asyncio.run_coroutine_threadsafe(
+                        self.play_next(ctx), self.bot.loop
+                    )
+            
             voice_client.play(
                 discord.FFmpegPCMAudio(url, **ffmpeg_options),
-                after=lambda e: asyncio.run_coroutine_threadsafe(
-                    self.play_next(ctx), self.bot.loop
-                )
+                after=after_playing
             )
             
-            await ctx.send(f'🎵 Đang phát: **{song["title"]}**')
+            # Create now playing embed
+            embed = discord.Embed(
+                title='🎵 Đang phát',
+                description=f'**{song["title"]}**',
+                color=discord.Color.blue()
+            )
+            
+            if song.get('thumbnail'):
+                embed.set_thumbnail(url=song['thumbnail'])
+                
+            if song.get('duration'):
+                duration = str(timedelta(seconds=song['duration']))
+                embed.add_field(
+                    name='⏱️ Thời lượng',
+                    value=duration,
+                    inline=True
+                )
+            
+            # Add queue info
+            if queue:
+                embed.add_field(
+                    name='📋 Queue',
+                    value=f'Còn {len(queue)} bài hát trong queue',
+                    inline=True
+                )
+            
+            await ctx.send(embed=embed)
             
         except Exception as e:
             logger.error(f'❌ Error playing song: {e}')
-            await ctx.send('❌ Có lỗi xảy ra khi phát bài hát!')
+            await self.handle_play_error(ctx, e)
+    
+    async def handle_play_error(self, ctx, error):
+        """Handle play errors and attempt recovery."""
+        try:
+            # If the error is related to streaming, try to skip to next song
+            if "403" in str(error) or "Forbidden" in str(error):
+                await ctx.send("❌ Lỗi khi phát bài hát. Đang chuyển sang bài tiếp theo...")
+            else:
+                await ctx.send(f"❌ Có lỗi xảy ra khi phát bài hát: {str(error)}")
+            
+            # Stop current playback
+            if ctx.voice_client and ctx.voice_client.is_playing():
+                ctx.voice_client.stop()
+            
+            # Try to play next song
             await self.play_next(ctx)
+        except Exception as e:
+            logger.error(f"❌ Error in handle_play_error: {e}")
+            await ctx.send("❌ Có lỗi xảy ra khi xử lý lỗi phát nhạc!")
     
     def is_youtube_url(self, url: str) -> bool:
         """Check if the URL is a YouTube URL."""
@@ -329,7 +401,7 @@ class Music(commands.Cog):
             logger.error(f"❌ Error getting SoundCloud playlist: {e}")
             return []
     
-    @commands.command(name='play', aliases=['p'])
+    @commands.hybrid_command(name='play', description='Phát nhạc từ YouTube, Spotify hoặc SoundCloud', aliases=['p'])
     async def play(self, ctx, *, query: str):
         """Play a song or add it to the queue."""
         if not ctx.author.voice:
@@ -363,7 +435,23 @@ class Music(commands.Cog):
                 if not ctx.voice_client.is_playing():
                     await self.play_next(ctx)
                 else:
-                    await ctx.send(f'✅ Đã thêm {len(songs)} bài hát vào queue!')
+                    embed = discord.Embed(
+                        title='✅ Đã thêm playlist vào queue',
+                        description=f'Đã thêm {len(songs)} bài hát vào queue',
+                        color=discord.Color.green()
+                    )
+                    # Add first few songs as preview
+                    preview = []
+                    for i, song in enumerate(songs[:5], 1):
+                        preview.append(f'{i}. {song["title"]}')
+                    if len(songs) > 5:
+                        preview.append(f'... và {len(songs) - 5} bài hát khác')
+                    embed.add_field(
+                        name='📝 Preview',
+                        value='\n'.join(preview),
+                        inline=False
+                    )
+                    await ctx.send(embed=embed)
                 return
 
             # Check if it's a Spotify URL
@@ -407,13 +495,35 @@ class Music(commands.Cog):
             if not ctx.voice_client.is_playing():
                 await self.play_next(ctx)
             else:
-                await ctx.send(f'✅ Đã thêm vào queue: **{song["title"]}**')
+                embed = discord.Embed(
+                    title='✅ Đã thêm vào queue',
+                    description=f'**{song["title"]}**',
+                    color=discord.Color.green()
+                )
+                if song.get('thumbnail'):
+                    embed.set_thumbnail(url=song['thumbnail'])
+                if song.get('duration'):
+                    duration = str(timedelta(seconds=song['duration']))
+                    embed.add_field(
+                        name='⏱️ Thời lượng',
+                        value=duration,
+                        inline=True
+                    )
+                # Add queue position
+                queue = self.get_queue(ctx.guild.id)
+                position = len(queue)
+                embed.add_field(
+                    name='📋 Vị trí trong queue',
+                    value=f'#{position}',
+                    inline=True
+                )
+                await ctx.send(embed=embed)
                 
         except Exception as e:
             logger.error(f'❌ Error in play command: {e}')
             await ctx.send('❌ Có lỗi xảy ra khi tìm kiếm bài hát!')
     
-    @commands.command(name='skip', aliases=['s'])
+    @commands.hybrid_command(name='skip', description='Bỏ qua bài hát hiện tại', aliases=['s'])
     async def skip(self, ctx):
         """Skip the current song."""
         if not ctx.voice_client:
@@ -423,9 +533,13 @@ class Music(commands.Cog):
             return await ctx.send('❌ Không có bài hát nào đang phát!')
         
         ctx.voice_client.stop()
-        await ctx.send('⏭️ Đã skip bài hát hiện tại!')
+        embed = discord.Embed(
+            title='⏭️ Đã skip bài hát',
+            color=discord.Color.blue()
+        )
+        await ctx.send(embed=embed)
     
-    @commands.command(name='stop')
+    @commands.hybrid_command(name='stop', description='Dừng phát nhạc và xóa queue', aliases=['st'])
     async def stop(self, ctx):
         """Stop playing and clear the queue."""
         if not ctx.voice_client:
@@ -437,9 +551,14 @@ class Music(commands.Cog):
         
         # Stop playing
         ctx.voice_client.stop()
-        await ctx.send('⏹️ Đã dừng phát nhạc và xóa queue!')
+        embed = discord.Embed(
+            title='⏹️ Đã dừng phát nhạc',
+            description='Queue đã được xóa',
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=embed)
     
-    @commands.command(name='pause')
+    @commands.hybrid_command(name='pause', description='Tạm dừng bài hát đang phát', aliases=['pa'])
     async def pause(self, ctx):
         """Pause the current song."""
         if not ctx.voice_client:
@@ -449,9 +568,13 @@ class Music(commands.Cog):
             return await ctx.send('❌ Không có bài hát nào đang phát!')
         
         ctx.voice_client.pause()
-        await ctx.send('⏸️ Đã tạm dừng bài hát!')
+        embed = discord.Embed(
+            title='⏸️ Đã tạm dừng bài hát',
+            color=discord.Color.orange()
+        )
+        await ctx.send(embed=embed)
     
-    @commands.command(name='resume')
+    @commands.hybrid_command(name='resume', description='Tiếp tục phát bài hát', aliases=['r'])
     async def resume(self, ctx):
         """Resume the current song."""
         if not ctx.voice_client:
@@ -461,32 +584,92 @@ class Music(commands.Cog):
             return await ctx.send('❌ Bài hát không đang tạm dừng!')
         
         ctx.voice_client.resume()
-        await ctx.send('▶️ Đã tiếp tục phát bài hát!')
+        embed = discord.Embed(
+            title='▶️ Đã tiếp tục phát bài hát',
+            color=discord.Color.green()
+        )
+        await ctx.send(embed=embed)
     
-    @commands.command(name='queue', aliases=['q'])
+    @commands.hybrid_command(name='queue', description='Hiển thị queue hiện tại', aliases=['q'])
     async def queue(self, ctx):
         """Show the current queue."""
         queue = self.get_queue(ctx.guild.id)
         if not queue:
             return await ctx.send('📋 Queue trống!')
         
-        # Create queue message
-        message = ['📋 **Queue hiện tại:**']
-        for i, song in enumerate(queue, 1):
-            message.append(f'{i}. {song["title"]}')
+        # Create queue embed
+        embed = discord.Embed(
+            title='📋 Queue hiện tại',
+            color=discord.Color.blue()
+        )
         
-        await ctx.send('\n'.join(message))
+        # Add current song if playing
+        current_song = self.now_playing.get(ctx.guild.id)
+        if current_song:
+            embed.add_field(
+                name='🎵 Đang phát',
+                value=f'**{current_song["title"]}**',
+                inline=False
+            )
+        
+        # Add queue songs
+        queue_text = []
+        for i, song in enumerate(queue[:10], 1):
+            duration = str(timedelta(seconds=song.get('duration', 0)))
+            queue_text.append(f'{i}. {song["title"]} `[{duration}]`')
+        
+        if len(queue) > 10:
+            queue_text.append(f'\n... và {len(queue) - 10} bài hát khác')
+        
+        embed.add_field(
+            name='📝 Queue',
+            value='\n'.join(queue_text),
+            inline=False
+        )
+        
+        # Add total duration
+        total_duration = sum(song.get('duration', 0) for song in queue)
+        if total_duration > 0:
+            embed.set_footer(text=f'Tổng thời lượng: {str(timedelta(seconds=total_duration))}')
+        
+        await ctx.send(embed=embed)
     
-    @commands.command(name='nowplaying', aliases=['np'])
+    @commands.hybrid_command(name='nowplaying', description='Hiển thị bài hát đang phát', aliases=['np'])
     async def now_playing(self, ctx):
         """Show the currently playing song."""
         song = self.now_playing.get(ctx.guild.id)
         if not song:
             return await ctx.send('❌ Không có bài hát nào đang phát!')
         
-        await ctx.send(f'🎵 Đang phát: **{song["title"]}**')
+        embed = discord.Embed(
+            title='🎵 Đang phát',
+            description=f'**{song["title"]}**',
+            color=discord.Color.blue()
+        )
+        
+        if song.get('thumbnail'):
+            embed.set_thumbnail(url=song['thumbnail'])
+            
+        if song.get('duration'):
+            duration = str(timedelta(seconds=song['duration']))
+            embed.add_field(
+                name='⏱️ Thời lượng',
+                value=duration,
+                inline=True
+            )
+        
+        # Add queue info
+        queue = self.get_queue(ctx.guild.id)
+        if queue:
+            embed.add_field(
+                name='📋 Queue',
+                value=f'Còn {len(queue)} bài hát trong queue',
+                inline=True
+            )
+        
+        await ctx.send(embed=embed)
     
-    @commands.command(name='leave', aliases=['disconnect'])
+    @commands.hybrid_command(name='leave', description='Rời voice channel', aliases=['disconnect', 'dc'])
     async def leave(self, ctx):
         """Leave the voice channel."""
         if not ctx.voice_client:
@@ -498,7 +681,11 @@ class Music(commands.Cog):
         
         # Disconnect
         await ctx.voice_client.disconnect()
-        await ctx.send('👋 Đã rời voice channel!')
+        embed = discord.Embed(
+            title='👋 Đã rời voice channel',
+            color=discord.Color.blue()
+        )
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Music(bot)) 

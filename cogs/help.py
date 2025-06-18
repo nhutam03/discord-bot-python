@@ -5,12 +5,12 @@ class Help(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     
-    @commands.hybrid_command(name='help')
+    @commands.hybrid_command(name='help', description='Hiển thị danh sách các lệnh có sẵn')
     async def help(self, ctx):
         """Show all available commands."""
         embed = discord.Embed(
             title='🎵 Music Bot Commands',
-            description='Danh sách các lệnh có sẵn:',
+            description='Dưới đây là các lệnh bạn có thể sử dụng:\n\n**Cách sử dụng:**\n• Slash commands: `/help`\n• Prefix commands: `thelp`',
             color=discord.Color.blue()
         )
         
@@ -44,7 +44,9 @@ class Help(commands.Cog):
             inline=False
         )
         
-        embed.set_footer(text='Prefix: t')
+        # Add footer with supported platforms
+        embed.set_footer(text='Hỗ trợ: YouTube, Spotify, SoundCloud')
+        
         await ctx.send(embed=embed)
 
 async def setup(bot):
