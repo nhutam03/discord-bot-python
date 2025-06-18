@@ -8,6 +8,9 @@ import os
 import json
 import time
 from datetime import datetime, timedelta
+import spotipy
+from spotipy.oauth2 import SpotifyClientCredentials
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +74,19 @@ class Music(commands.Cog):
             }],
         }
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
+        
+        # Initialize Spotify client
+        try:
+            self.spotify = spotipy.Spotify(
+                client_credentials_manager=SpotifyClientCredentials(
+                    client_id=os.getenv('SPOTIFY_CLIENT_ID'),
+                    client_secret=os.getenv('SPOTIFY_CLIENT_SECRET')
+                )
+            )
+            logger.info("✅ Spotify client initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Error initializing Spotify client: {e}")
+            self.spotify = None
     
     def get_ydl_opts(self):
         """Get yt-dlp options with current cookies file."""
@@ -125,6 +141,39 @@ class Music(commands.Cog):
             await ctx.send('❌ Có lỗi xảy ra khi phát bài hát!')
             await self.play_next(ctx)
     
+    def is_spotify_url(self, url: str) -> bool:
+        """Check if the URL is a Spotify URL."""
+        return bool(re.match(r'^https?://(?:open\.)?spotify\.com/(?:track|album|playlist|artist)/[a-zA-Z0-9]+', url))
+    
+    async def get_spotify_track_info(self, url: str) -> Optional[dict]:
+        """Get track information from Spotify URL."""
+        if not self.spotify:
+            return None
+            
+        try:
+            # Extract track ID from URL
+            track_id = url.split('/')[-1].split('?')[0]
+            track = self.spotify.track(track_id)
+            
+            # Get artist and title
+            artist = track['artists'][0]['name']
+            title = track['name']
+            
+            # Search on YouTube
+            search_query = f"{artist} - {title} audio"
+            with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
+                info = ydl.extract_info(f"ytsearch:{search_query}", download=False)['entries'][0]
+                
+            return {
+                'title': f"{artist} - {title}",
+                'url': info['url'],
+                'duration': track['duration_ms'] // 1000,
+                'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else ''
+            }
+        except Exception as e:
+            logger.error(f"❌ Error getting Spotify track info: {e}")
+            return None
+    
     @commands.command(name='play', aliases=['p'])
     async def play(self, ctx, *, query: str):
         """Play a song or add it to the queue."""
@@ -136,21 +185,27 @@ class Music(commands.Cog):
             await ctx.author.voice.channel.connect()
         
         try:
-            # Search for the song with current cookies
-            with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
-                try:
-                    # Try to extract info directly if it's a URL
-                    info = ydl.extract_info(query, download=False)
-                except:
-                    # If not a URL, search for it
-                    info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
-                
-                song = {
-                    'title': info['title'],
-                    'url': info['url'],
-                    'duration': info.get('duration', 0),
-                    'thumbnail': info.get('thumbnail', '')
-                }
+            # Check if it's a Spotify URL
+            if self.is_spotify_url(query):
+                song = await self.get_spotify_track_info(query)
+                if not song:
+                    return await ctx.send('❌ Không thể lấy thông tin bài hát từ Spotify!')
+            else:
+                # Search for the song with current cookies
+                with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
+                    try:
+                        # Try to extract info directly if it's a URL
+                        info = ydl.extract_info(query, download=False)
+                    except:
+                        # If not a URL, search for it
+                        info = ydl.extract_info(f"ytsearch:{query}", download=False)['entries'][0]
+                    
+                    song = {
+                        'title': info['title'],
+                        'url': info['url'],
+                        'duration': info.get('duration', 0),
+                        'thumbnail': info.get('thumbnail', '')
+                    }
             
             # Add to queue
             self.add_to_queue(ctx.guild.id, song)
