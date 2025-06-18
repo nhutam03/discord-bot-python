@@ -167,37 +167,45 @@ class Music(commands.Cog):
         return False
 
     async def get_youtube_playlist(self, url: str) -> List[dict]:
-        """Get all songs from a YouTube playlist or video."""
+        """Get all songs from a YouTube playlist or video, always fetch full info for each entry."""
         try:
-            # Clean up the URL by removing query parameters
-            clean_url = url.split('?')[0]
-            
             with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
-                try:
-                    # First try to get playlist/video info
-                    info = ydl.extract_info(clean_url, download=False)
-                    
-                    # Check if it's a playlist
-                    if 'entries' in info:
-                        return [{
-                            'title': entry['title'],
-                            'url': entry['url'],
-                            'duration': entry.get('duration', 0),
-                            'thumbnail': entry.get('thumbnail', '')
-                        } for entry in info['entries']]
-                    
-                    # If it's a single video, return it as a single-item playlist
-                    return [{
-                        'title': info['title'],
-                        'url': info['url'],
-                        'duration': info.get('duration', 0),
-                        'thumbnail': info.get('thumbnail', '')
-                    }]
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error extracting YouTube info: {e}")
-                    return []
-                    
+                info = ydl.extract_info(url, download=False)
+                songs = []
+                if 'entries' in info:
+                    for entry in info['entries']:
+                        if not entry:
+                            continue
+                        # Nếu entry chưa có đủ thông tin, lấy lại bằng id
+                        if not entry.get('title') or not entry.get('url'):
+                            video_id = entry.get('id')
+                            if video_id:
+                                try:
+                                    video_info = ydl.extract_info(f'https://www.youtube.com/watch?v={video_id}', download=False)
+                                    songs.append({
+                                        'title': video_info.get('title', 'Unknown Title'),
+                                        'url': video_info.get('url', ''),
+                                        'duration': video_info.get('duration', 0),
+                                        'thumbnail': video_info.get('thumbnail', '')
+                                    })
+                                except Exception as e:
+                                    logger.error(f"❌ Error fetching video info for {video_id}: {e}")
+                                    continue
+                        else:
+                            songs.append({
+                                'title': entry.get('title', 'Unknown Title'),
+                                'url': entry.get('url', ''),
+                                'duration': entry.get('duration', 0),
+                                'thumbnail': entry.get('thumbnail', '')
+                            })
+                    return songs
+                # Nếu là 1 video
+                return [{
+                    'title': info.get('title', 'Unknown Title'),
+                    'url': info.get('url', ''),
+                    'duration': info.get('duration', 0),
+                    'thumbnail': info.get('thumbnail', '')
+                }]
         except Exception as e:
             logger.error(f"❌ Error getting YouTube playlist: {e}")
             return []
