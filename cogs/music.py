@@ -65,18 +65,23 @@ class Music(commands.Cog):
         self.now_playing: Dict[int, dict] = {}
         self.cookie_manager = CookieManager()
         
-        # Configure yt-dlp
+        # Configure yt-dlp with improved audio quality
         self.ydl_opts = {
             'format': 'bestaudio/best',
-            'noplaylist': True,
+            'noplaylist': False,  # Enable playlist support
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '192',
+                'preferredquality': '320',  # Increased quality to 320kbps
             }],
+            'postprocessor_args': [
+                '-ar', '48000',  # Set sample rate to 48kHz
+                '-ac', '2',      # Set to stereo
+                '-b:a', '320k',  # Set bitrate to 320kbps
+            ],
         }
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
         
@@ -130,10 +135,13 @@ class Music(commands.Cog):
                 url = info['url']
                 
             voice_client.play(
-                discord.FFmpegPCMAudio(url, **{
-                    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-                    'options': '-vn'
-                }),
+                discord.FFmpegPCMAudio(
+                    url,
+                    **{
+                        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+                        'options': '-vn -af "volume=1.5" -ar 48000 -ac 2 -b:a 320k'  # Improved audio quality
+                    }
+                ),
                 after=lambda e: asyncio.run_coroutine_threadsafe(
                     self.play_next(ctx), self.bot.loop
                 )
@@ -179,6 +187,23 @@ class Music(commands.Cog):
             logger.error(f"❌ Error getting Spotify track info: {e}")
             return None
     
+    async def get_youtube_playlist(self, url: str) -> List[dict]:
+        """Get all songs from a YouTube playlist."""
+        try:
+            with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
+                playlist = ydl.extract_info(url, download=False)
+                if 'entries' in playlist:
+                    return [{
+                        'title': entry['title'],
+                        'url': entry['url'],
+                        'duration': entry.get('duration', 0),
+                        'thumbnail': entry.get('thumbnail', '')
+                    } for entry in playlist['entries']]
+                return []
+        except Exception as e:
+            logger.error(f"❌ Error getting playlist: {e}")
+            return []
+    
     @commands.command(name='play', aliases=['p'])
     async def play(self, ctx, *, query: str):
         """Play a song or add it to the queue."""
@@ -190,6 +215,24 @@ class Music(commands.Cog):
             await ctx.author.voice.channel.connect()
         
         try:
+            # Check if it's a YouTube playlist
+            if 'youtube.com/playlist' in query or 'youtu.be/playlist' in query:
+                await ctx.send('⏳ Đang tải playlist...')
+                songs = await self.get_youtube_playlist(query)
+                if not songs:
+                    return await ctx.send('❌ Không thể tải playlist!')
+                
+                # Add all songs to queue
+                for song in songs:
+                    self.add_to_queue(ctx.guild.id, song)
+                
+                # If nothing is playing, start playing
+                if not ctx.voice_client.is_playing():
+                    await self.play_next(ctx)
+                else:
+                    await ctx.send(f'✅ Đã thêm {len(songs)} bài hát vào queue!')
+                return
+
             # Check if it's a Spotify URL
             if self.is_spotify_url(query):
                 song = await self.get_spotify_track_info(query)
