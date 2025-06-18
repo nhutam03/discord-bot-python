@@ -6,7 +6,6 @@ from typing import Optional, Dict, List
 import yt_dlp
 import os
 import json
-import requests
 import time
 from datetime import datetime, timedelta
 
