@@ -5,6 +5,7 @@ import logging
 from typing import Optional, Dict, List
 import yt_dlp
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class Music(commands.Cog):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
+            'cookiesfrombrowser': ('chrome',),  # Use Chrome cookies
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
