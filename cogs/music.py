@@ -17,46 +17,12 @@ logger = logging.getLogger(__name__)
 class CookieManager:
     def __init__(self):
         self.cookies_file = 'cookies.txt'
-        self.last_update = None
-        self.update_interval = timedelta(hours=6)  # Update every 6 hours
         
     def get_cookies_file(self) -> str:
         """Get current cookies file path."""
         if not os.path.exists(self.cookies_file):
             raise FileNotFoundError("cookies.txt file not found. Please create it with valid YouTube cookies.")
-            
-        if self.should_update():
-            self.update_cookies()
         return self.cookies_file
-    
-    def should_update(self) -> bool:
-        """Check if cookies need to be updated."""
-        if not self.last_update:
-            return True
-        return datetime.now() - self.last_update > self.update_interval
-    
-    def update_cookies(self):
-        """Update cookies file using YouTube API."""
-        try:
-            # Use yt-dlp to get fresh cookies
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'extract_flat': True,
-                'cookiefile': self.cookies_file,
-                'cookiesfrombrowser': ('chrome',),  # Try to get cookies from Chrome
-                'cookiesfrombrowser': ('firefox',),  # Try to get cookies from Firefox
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Try to access a public video to get cookies
-                ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
-                self.last_update = datetime.now()
-                logger.info("✅ Cookies updated successfully")
-        except Exception as e:
-            logger.error(f"❌ Error updating cookies: {e}")
-            # If update fails, continue using existing cookies file
-            if not os.path.exists(self.cookies_file):
-                raise FileNotFoundError("cookies.txt file not found and could not be created automatically. Please create it manually with valid YouTube cookies.")
 
 class Music(commands.Cog):
     def __init__(self, bot):
@@ -325,19 +291,23 @@ class Music(commands.Cog):
                     # Check if it's a playlist
                     if 'entries' in playlist:
                         return [{
-                            'title': entry['title'],
-                            'url': entry['url'],
+                            'title': entry.get('title', 'Unknown Title'),
+                            'url': entry.get('url', ''),
                             'duration': entry.get('duration', 0),
                             'thumbnail': entry.get('thumbnail', '')
-                        } for entry in playlist['entries']]
+                        } for entry in playlist['entries'] if entry.get('url')]
                     
                     # If it's a single track, return it as a single-item playlist
-                    return [{
-                        'title': playlist['title'],
-                        'url': playlist['url'],
-                        'duration': playlist.get('duration', 0),
-                        'thumbnail': playlist.get('thumbnail', '')
-                    }]
+                    if playlist.get('url'):
+                        return [{
+                            'title': playlist.get('title', 'Unknown Title'),
+                            'url': playlist.get('url', ''),
+                            'duration': playlist.get('duration', 0),
+                            'thumbnail': playlist.get('thumbnail', '')
+                        }]
+                    
+                    logger.error(f"❌ Invalid SoundCloud response: {playlist}")
+                    return []
                     
                 except Exception as e:
                     logger.error(f"❌ Error extracting SoundCloud info: {e}")
