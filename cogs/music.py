@@ -6,14 +6,57 @@ from typing import Optional, Dict, List
 import yt_dlp
 import os
 import json
+import requests
+import time
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+class CookieManager:
+    def __init__(self):
+        self.cookies = None
+        self.last_update = None
+        self.update_interval = timedelta(hours=6)  # Update every 6 hours
+        
+    def get_cookies(self) -> Dict:
+        """Get current cookies or update if needed."""
+        if self.should_update():
+            self.update_cookies()
+        return self.cookies or {}
+    
+    def should_update(self) -> bool:
+        """Check if cookies need to be updated."""
+        if not self.last_update:
+            return True
+        return datetime.now() - self.last_update > self.update_interval
+    
+    def update_cookies(self):
+        """Update cookies using YouTube API."""
+        try:
+            # Use yt-dlp to get fresh cookies
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Try to access a public video to get cookies
+                ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
+                self.cookies = ydl.cookiejar
+                self.last_update = datetime.now()
+                logger.info("✅ Cookies updated successfully")
+        except Exception as e:
+            logger.error(f"❌ Error updating cookies: {e}")
+            # If update fails, keep using old cookies if available
+            if not self.cookies:
+                raise
 
 class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.queues: Dict[int, List[dict]] = {}
         self.now_playing: Dict[int, dict] = {}
+        self.cookie_manager = CookieManager()
         
         # Configure yt-dlp
         self.ydl_opts = {
@@ -22,7 +65,6 @@ class Music(commands.Cog):
             'quiet': True,
             'no_warnings': True,
             'extract_flat': True,
-            'cookiesfrombrowser': ('chrome',),  # Use Chrome cookies
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -30,6 +72,13 @@ class Music(commands.Cog):
             }],
         }
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
+    
+    def get_ydl_opts(self):
+        """Get yt-dlp options with current cookies."""
+        opts = self.ydl_opts.copy()
+        opts['cookiefile'] = None  # Don't use cookiefile
+        opts['cookies'] = self.cookie_manager.get_cookies()
+        return opts
     
     def get_queue(self, guild_id: int) -> List[dict]:
         """Get the queue for a guild."""
@@ -56,8 +105,8 @@ class Music(commands.Cog):
             return
         
         try:
-            # Download and play the song
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+            # Download and play the song with current cookies
+            with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
                 info = ydl.extract_info(song['url'], download=False)
                 url = info['url']
                 
@@ -89,8 +138,8 @@ class Music(commands.Cog):
             await ctx.author.voice.channel.connect()
         
         try:
-            # Search for the song
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+            # Search for the song with current cookies
+            with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
                 try:
                     # Try to extract info directly if it's a URL
                     info = ydl.extract_info(query, download=False)
