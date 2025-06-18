@@ -40,6 +40,13 @@ class MusicBot(commands.Bot):
                     logger.info(f'✅ Loaded extension: {filename}')
                 except Exception as e:
                     logger.error(f'❌ Failed to load extension {filename}: {e}')
+        
+        # Sync commands
+        try:
+            synced = await self.tree.sync()
+            logger.info(f'✅ Synced {len(synced)} command(s)')
+        except Exception as e:
+            logger.error(f'❌ Failed to sync commands: {e}')
     
     async def on_ready(self):
         logger.info(f'🚀 Bot is ready! Logged in as {self.user.name}')
@@ -66,9 +73,21 @@ async def main():
     bot = MusicBot()
     
     try:
-        await bot.start(os.getenv('YOUR_BOT_TOKEN'))
+        # Get token from Heroku environment variable
+        token = os.getenv('YOUR_BOT_TOKEN')
+        if not token:
+            raise ValueError("No token found. Please set YOUR_BOT_TOKEN environment variable.")
+            
+        await bot.start(token)
     except Exception as e:
         logger.error(f'❌ Error starting bot: {e}')
 
 if __name__ == '__main__':
-    asyncio.run(main()) 
+    # Set up asyncio event loop
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Bot is shutting down...")
+    finally:
+        loop.close() 
