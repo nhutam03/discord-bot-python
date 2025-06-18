@@ -158,6 +158,20 @@ class Music(commands.Cog):
         """Check if the URL is a Spotify URL."""
         return bool(re.match(r'^https?://(?:open\.)?spotify\.com/(?:track|album|playlist|artist)/[a-zA-Z0-9]+', url))
     
+    def is_soundcloud_url(self, url: str) -> bool:
+        """Check if the URL is a SoundCloud URL."""
+        return bool(re.match(r'^https?://(?:www\.)?soundcloud\.com/[\w-]+/[\w-]+', url))
+    
+    def is_playlist_url(self, url: str) -> bool:
+        """Check if the URL is a playlist URL."""
+        return any([
+            'youtube.com/playlist' in url,
+            'youtu.be/playlist' in url,
+            'spotify.com/playlist' in url,
+            'spotify.com/album' in url,
+            'soundcloud.com/sets' in url
+        ])
+
     async def get_spotify_track_info(self, url: str) -> Optional[dict]:
         """Get track information from Spotify URL."""
         if not self.spotify:
@@ -187,8 +201,51 @@ class Music(commands.Cog):
             logger.error(f"❌ Error getting Spotify track info: {e}")
             return None
     
-    async def get_youtube_playlist(self, url: str) -> List[dict]:
-        """Get all songs from a YouTube playlist."""
+    async def get_spotify_playlist_info(self, url: str) -> List[dict]:
+        """Get track information from Spotify playlist/album URL."""
+        if not self.spotify:
+            return []
+            
+        try:
+            # Extract playlist/album ID from URL
+            playlist_id = url.split('/')[-1].split('?')[0]
+            
+            # Check if it's a playlist or album
+            if 'playlist' in url:
+                playlist = self.spotify.playlist(playlist_id)
+                tracks = playlist['tracks']['items']
+            else:  # album
+                album = self.spotify.album(playlist_id)
+                tracks = album['tracks']['items']
+            
+            songs = []
+            for item in tracks:
+                track = item['track'] if 'track' in item else item
+                artist = track['artists'][0]['name']
+                title = track['name']
+                
+                # Search on YouTube
+                search_query = f"{artist} - {title} audio"
+                with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
+                    try:
+                        info = ydl.extract_info(f"ytsearch:{search_query}", download=False)['entries'][0]
+                        songs.append({
+                            'title': f"{artist} - {title}",
+                            'url': info['url'],
+                            'duration': track['duration_ms'] // 1000,
+                            'thumbnail': track['album']['images'][0]['url'] if track['album']['images'] else ''
+                        })
+                    except Exception as e:
+                        logger.error(f"❌ Error getting track info for {title}: {e}")
+                        continue
+                        
+            return songs
+        except Exception as e:
+            logger.error(f"❌ Error getting Spotify playlist info: {e}")
+            return []
+
+    async def get_soundcloud_playlist(self, url: str) -> List[dict]:
+        """Get all songs from a SoundCloud playlist."""
         try:
             with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
                 playlist = ydl.extract_info(url, download=False)
@@ -201,7 +258,7 @@ class Music(commands.Cog):
                     } for entry in playlist['entries']]
                 return []
         except Exception as e:
-            logger.error(f"❌ Error getting playlist: {e}")
+            logger.error(f"❌ Error getting SoundCloud playlist: {e}")
             return []
     
     @commands.command(name='play', aliases=['p'])
@@ -215,10 +272,18 @@ class Music(commands.Cog):
             await ctx.author.voice.channel.connect()
         
         try:
-            # Check if it's a YouTube playlist
-            if 'youtube.com/playlist' in query or 'youtu.be/playlist' in query:
+            # Check if it's a playlist URL
+            if self.is_playlist_url(query):
                 await ctx.send('⏳ Đang tải playlist...')
-                songs = await self.get_youtube_playlist(query)
+                songs = []
+                
+                if 'youtube.com/playlist' in query or 'youtu.be/playlist' in query:
+                    songs = await self.get_youtube_playlist(query)
+                elif 'spotify.com/playlist' in query or 'spotify.com/album' in query:
+                    songs = await self.get_spotify_playlist_info(query)
+                elif 'soundcloud.com/sets' in query:
+                    songs = await self.get_soundcloud_playlist(query)
+                
                 if not songs:
                     return await ctx.send('❌ Không thể tải playlist!')
                 
@@ -238,6 +303,16 @@ class Music(commands.Cog):
                 song = await self.get_spotify_track_info(query)
                 if not song:
                     return await ctx.send('❌ Không thể lấy thông tin bài hát từ Spotify!')
+            # Check if it's a SoundCloud URL
+            elif self.is_soundcloud_url(query):
+                with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
+                    info = ydl.extract_info(query, download=False)
+                    song = {
+                        'title': info['title'],
+                        'url': info['url'],
+                        'duration': info.get('duration', 0),
+                        'thumbnail': info.get('thumbnail', '')
+                    }
             else:
                 # Search for the song with current cookies
                 with yt_dlp.YoutubeDL(self.get_ydl_opts()) as ydl:
