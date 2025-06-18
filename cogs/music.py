@@ -22,6 +22,9 @@ class CookieManager:
         
     def get_cookies_file(self) -> str:
         """Get current cookies file path."""
+        if not os.path.exists(self.cookies_file):
+            raise FileNotFoundError("cookies.txt file not found. Please create it with valid YouTube cookies.")
+            
         if self.should_update():
             self.update_cookies()
         return self.cookies_file
@@ -40,7 +43,9 @@ class CookieManager:
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': True,
-                'cookiefile': self.cookies_file
+                'cookiefile': self.cookies_file,
+                'cookiesfrombrowser': ('chrome',),  # Try to get cookies from Chrome
+                'cookiesfrombrowser': ('firefox',),  # Try to get cookies from Firefox
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Try to access a public video to get cookies
@@ -51,7 +56,7 @@ class CookieManager:
             logger.error(f"❌ Error updating cookies: {e}")
             # If update fails, continue using existing cookies file
             if not os.path.exists(self.cookies_file):
-                raise
+                raise FileNotFoundError("cookies.txt file not found and could not be created automatically. Please create it manually with valid YouTube cookies.")
 
 class Music(commands.Cog):
     def __init__(self, bot):

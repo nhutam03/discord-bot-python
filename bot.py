@@ -53,7 +53,7 @@ class MusicBot(commands.Bot):
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name='Đang phục vụ server!'
+                name='Anime!'
             )
         )
     
