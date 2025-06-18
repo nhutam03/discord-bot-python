@@ -14,15 +14,15 @@ logger = logging.getLogger(__name__)
 
 class CookieManager:
     def __init__(self):
-        self.cookies = None
+        self.cookies_file = 'cookies.txt'
         self.last_update = None
         self.update_interval = timedelta(hours=6)  # Update every 6 hours
         
-    def get_cookies(self) -> Dict:
-        """Get current cookies or update if needed."""
+    def get_cookies_file(self) -> str:
+        """Get current cookies file path."""
         if self.should_update():
             self.update_cookies()
-        return self.cookies or {}
+        return self.cookies_file
     
     def should_update(self) -> bool:
         """Check if cookies need to be updated."""
@@ -31,24 +31,24 @@ class CookieManager:
         return datetime.now() - self.last_update > self.update_interval
     
     def update_cookies(self):
-        """Update cookies using YouTube API."""
+        """Update cookies file using YouTube API."""
         try:
             # Use yt-dlp to get fresh cookies
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
                 'extract_flat': True,
+                'cookiefile': self.cookies_file
             }
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Try to access a public video to get cookies
                 ydl.extract_info('https://www.youtube.com/watch?v=dQw4w9WgXcQ', download=False)
-                self.cookies = ydl.cookiejar
                 self.last_update = datetime.now()
                 logger.info("✅ Cookies updated successfully")
         except Exception as e:
             logger.error(f"❌ Error updating cookies: {e}")
-            # If update fails, keep using old cookies if available
-            if not self.cookies:
+            # If update fails, continue using existing cookies file
+            if not os.path.exists(self.cookies_file):
                 raise
 
 class Music(commands.Cog):
@@ -74,10 +74,9 @@ class Music(commands.Cog):
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
     
     def get_ydl_opts(self):
-        """Get yt-dlp options with current cookies."""
+        """Get yt-dlp options with current cookies file."""
         opts = self.ydl_opts.copy()
-        opts['cookiefile'] = None  # Don't use cookiefile
-        opts['cookies'] = self.cookie_manager.get_cookies()
+        opts['cookiefile'] = self.cookie_manager.get_cookies_file()
         return opts
     
     def get_queue(self, guild_id: int) -> List[dict]:
