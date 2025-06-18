@@ -75,12 +75,13 @@ class Music(commands.Cog):
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '320',  # Increased quality to 320kbps
+                'preferredquality': '320',  # Maximum quality
             }],
             'postprocessor_args': [
-                '-ar', '48000',  # Set sample rate to 48kHz
-                '-ac', '2',      # Set to stereo
-                '-b:a', '320k',  # Set bitrate to 320kbps
+                '-ar', '48000',     # Set sample rate to 48kHz
+                '-ac', '2',         # Set to stereo
+                '-b:a', '320k',     # Set bitrate to 320kbps
+                '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',  # Normalize audio levels
             ],
         }
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
@@ -134,14 +135,28 @@ class Music(commands.Cog):
                 info = ydl.extract_info(song['url'], download=False)
                 url = info['url']
                 
+            # Enhanced audio processing options
+            ffmpeg_options = {
+                'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+                'options': (
+                    '-vn '  # Disable video
+                    '-af "'
+                    'volume=2.0,'  # Increase volume
+                    'loudnorm=I=-16:TP=-1.5:LRA=11,'  # Normalize audio levels
+                    'equalizer=f=1000:width_type=h:width=200:g=3,'  # Boost mid frequencies
+                    'equalizer=f=3000:width_type=h:width=200:g=2,'  # Boost high-mid frequencies
+                    'equalizer=f=8000:width_type=h:width=200:g=1,'  # Slight boost to high frequencies
+                    'aresample=48000,'  # Resample to 48kHz
+                    'aformat=sample_fmts=s16:channel_layouts=stereo'  # Ensure stereo output
+                    '" '
+                    '-ar 48000 '  # Set sample rate
+                    '-ac 2 '      # Set to stereo
+                    '-b:a 320k'   # Set bitrate
+                )
+            }
+            
             voice_client.play(
-                discord.FFmpegPCMAudio(
-                    url,
-                    **{
-                        'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-                        'options': '-vn -af "volume=1.5" -ar 48000 -ac 2 -b:a 320k'  # Improved audio quality
-                    }
-                ),
+                discord.FFmpegPCMAudio(url, **ffmpeg_options),
                 after=lambda e: asyncio.run_coroutine_threadsafe(
                     self.play_next(ctx), self.bot.loop
                 )
